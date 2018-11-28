@@ -1,0 +1,252 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The group developped a prediction model that will help the Houston Police Department to manage available human resources to better respond to crime offenses.
+
+```{r libraries, echo=FALSE}
+#Libraries:
+library(readxl)
+library(lubridate)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(DMwR2)
+
+```
+Here we use the Crime data and clean up and group the data into different categories.  First the date will need to be grouped into categories, as well as the geographic Beat.  We will classify the Beat by taking the first three letters as OuterBeat as a location identifier.  Further clean up includes removing data outside of the Jan01 - Mar31, 2018 date, and removing the "UNK" data in the Beat section.
+
+```{r dataprepocessing, echo=FALSE}
+#Import Data (change filepath)
+crime <- data.frame(read_excel("consolidated_jan-mar.xlsx"))
+
+#Check Class of all Variables:
+sapply(crime, class)
+
+#Change Class of "Date" column to Date:
+crime$Date <- mdy(crime$Date)
+class(crime$Date)
+
+#Add in weekday number, weekday name, and month
+crime$WeekDayNum=wday(crime$Date) #numeric represenation of week day, Sunday = 1, Saturday = 7
+crime$WeekDay=wday(crime$Date, label = TRUE ) #abbreviated text version of day, i.e. Mon, Tues, etc
+crime$Month=month(crime$Date, label = TRUE ) # #abbreviated text version of month, i.e. Jan, Feb, Mar
+crime$mday = mday(crime$Date)
+crime$OuterBeat  =substr(crime$Beat, start = 1, stop = 3)
+
+head(crime$Beat)
+head(crime$OuterBeat)
+
+#Subset to eliminate entries before 01-01-2018
+crime <- subset(crime, crime$Date >= as.Date("2018-01-01"))
+dim(crime)
+
+#Remove Duplicate Rows
+crime <- unique(crime)
+dim(crime)
+
+#Remove rows with 'UNK' beat
+crime <- subset(crime,crime$Beat != "UNK")
+
+```
+Next, the team will categorize the data into hourshift and aggregate the crime in the location by that shift which we now identified as CrimeCount.  We build a summary dataset called summary_beat where we select the category and arrange by by the date below:
+
+```{R}
+
+#Split hours into 4 hour shifts
+crime$HourShift <- 
+      cut(crime$Hour,
+      breaks = c(0,3,7,11,15,19,24),
+      labels = c("00:00-03:59","04:00-07:59","08:00-11:59","12:00-15:59","16:00-19:59","20:00-23:59"),
+      right = FALSE)
+
+crime$n <- 0
+# Change count column name from 'n' to CrimeCount
+names(crime)[names(crime) == "n"] <- "CrimeCount"
+
+grouped_crimes <- crime %>% 
+  group_by(OuterBeat,WeekDay,HourShift)  %>%  
+  dplyr::summarise(CrimeCount = n()) 
+
+grouped_crime1 <- crime %>% 
+  group_by(Beat,WeekDay,HourShift)  %>%  
+  dplyr::summarise(CrimeCount = n()) 
+
+View(grouped_crimes)
+
+#Select and Arrange summary_beat dataset
+summary_beat <- select(grouped_crimes, OuterBeat, HourShift, WeekDay, CrimeCount)
+summary_beat <- arrange(summary_beat, OuterBeat, WeekDay, HourShift)
+
+summary_beat1 <- select(grouped_crime1, Beat, HourShift, WeekDay, CrimeCount)
+summary_beat1 <- arrange(summary_beat1, Beat, WeekDay, HourShift)
+
+summary_beat_ts <- summary_beat
+summary_beat_ts1 <- summary_beat1
+
+#summary_beat_ts = select(summary_beat_ts,-BeatShift)
+summary_beat_ts$OuterBeat <- as.factor(summary_beat_ts$OuterBeat)
+summary_beat_ts$HourShift <- as.factor(summary_beat_ts$HourShift)
+summary_beat_ts$WeekDay <- as.factor(summary_beat_ts$WeekDay)
+
+summary_beat_ts1$Beat <- as.factor(summary_beat_ts1$Beat)
+summary_beat_ts1$HourShift <- as.factor(summary_beat_ts1$HourShift)
+summary_beat_ts1$WeekDay <- as.factor(summary_beat_ts1$WeekDay)
+
+```
+
+Prediction model - (using OuterBeat)
+Here we will assess different models to evaluate which ones best predicts the data.  First, we will polarize the data into two seperate sets, with the training data and the test data for prediction analysis.  We will evaluate three different models and assess the best fit model.
+
+```{R}
+
+set.seed(1234)
+dim(summary_beat_ts)
+head(summary_beat_ts)
+
+sp <- sample(1:nrow(summary_beat_ts),nrow(summary_beat_ts)*0.8)
+tr <- summary_beat_ts[sp,] 
+ts <- summary_beat_ts[-sp,] 
+
+dim(tr)
+dim(ts)
+head(ts)
+
+#Classification Tree Model
+arv <- rpartXse( CrimeCount ~.,tr) 
+preds <- predict(arv,ts ) 
+
+head(ts$CrimeCount)
+head(preds)
+
+#The Mean Absolute Error (MAE) measures the average absolute
+#deviation between the predictions and the true values
+
+mae <- mean(abs(preds-ts$CrimeCount),na.rm=T) 
+mae
+
+#The Mean Average Percentage Error (MAPE)
+mape <- mean(abs(preds-ts$CrimeCount)/ts$CrimeCount,na.rm=T)
+mape
+#The Mean Squared Error (MSE) measures the average squared
+#deviation between the predictions and the true values.
+mse <- mean((ts$CrimeCount-preds)^2)
+mse
+#Root Mean Squared Error (RMSE),
+rmse <- sqrt(mse)
+rmse
+
+```
+
+Classification Tree model shows a relatively low MSE at 20.7, representing the incumbent model.  Further analysis will be done with other models to assess if this is the best fit.
+
+============================================================================
+
+Prediction model (Option 2 using Beat)
+Here we will assess different models to evaluate which ones best predicts the data.  First, we will polarize the data into two seperate sets, with the training data and the test data for prediction analysis.  We will evaluate three different models and assess the best fit model.
+
+```{R}
+
+set.seed(1234)
+dim(summary_beat_ts1)
+head(summary_beat_ts1)
+
+sp <- sample(1:nrow(summary_beat_ts1),nrow(summary_beat_ts1)*0.8)
+tr <- summary_beat_ts1[sp,] 
+ts <- summary_beat_ts1[-sp,] 
+
+dim(tr)
+dim(ts)
+head(ts)
+
+#Classification Tree Model
+arv <- rpartXse( CrimeCount ~.,tr) 
+preds <- predict(arv,ts) 
+
+head(ts$CrimeCount)
+head(preds)
+
+#The Mean Absolute Error (MAE) measures the average absolute
+#deviation between the predictions and the true values
+
+mae <- mean(abs(preds-ts$CrimeCount),na.rm=T) 
+mae
+
+#The Mean Average Percentage Error (MAPE)
+mape <- mean(abs(preds-ts$CrimeCount)/ts$CrimeCount,na.rm=T)
+mape
+#The Mean Squared Error (MSE) measures the average squared
+#deviation between the predictions and the true values.
+mse <- mean((ts$CrimeCount-preds)^2)
+mse
+#Root Mean Squared Error (RMSE),
+rmse <- sqrt(mse)
+rmse
+```
+Upon changing to OuterBeat (Option2), the classification Tree model shows a lower MSE at 9.6, representing the our new incumbent model.  Further analysis will be done with other models to assess if this is the best fit.
+
+
+```{R}
+#Linear Models Fit
+
+sp <- sample(1:nrow(summary_beat_ts1),nrow(summary_beat_ts1)*0.8)
+tr <- summary_beat_ts1[sp,] 
+ts <- summary_beat_ts1[-sp,] 
+
+lm.fit <- glm(CrimeCount ~ ., data=tr)
+pr.lm <- predict(lm.fit,ts)
+
+lm.mae <- mean(abs(pr.lm),na.rm=T) 
+lm.mae
+
+#The Mean Average Percentage Error (MAPE)
+lm.mape <- mean(abs(pr.lm)/pr.lm,na.rm=T)
+lm.mape
+#The Mean Squared Error (MSE) measures the average squared
+#deviation between the predictions and the true values.
+lm.mse <- mean((ts$CrimeCount-pr.lm)^2)
+lm.mse
+#Root Mean Squared Error (RMSE),
+lm.rmse <- sqrt(lm.mse)
+lm.rmse
+
+```
+Linear Regression Model shows a high MSE at 11.2, higher than the Tree Classification, thus Tree Classification remains the incumbent model.
+
+
+```{R}
+library(e1071)
+#Plot the dataset
+sp <- sample(1:nrow(summary_beat_ts1),nrow(summary_beat_ts1)*0.8)
+tr <- summary_beat_ts1[sp,] 
+ts <- summary_beat_ts1[-sp,] 
+
+svm.model <- svm(tr$CrimeCount ~ tr$Beat, tr)
+svm.pred <- predict(svm.model, ts)
+
+svm.mse <- mean((ts$CrimeCount - svm.pred)^2)
+svm.mse
+
+svm.rmse <- sqrt(svm.mse)
+svm.rmse
+
+```
+
+The SVM reveals a even higher MSE at 32.3, thus is not the model to be considered.  
+
+========================================================
+
+CONCLUSION
+From the three models, the Tree Classification demonstrates the lowest MSE, and thus we see this as the best fit.
+
+
+
+
+
+
+```{R}
+
+
+```
+
